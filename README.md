@@ -6,10 +6,10 @@
 
 **A geographical `mtr` clone with a Braille-rendered world map in the terminal.**
 
-[![GitHub stars](https://img.shields.io/github/stars/Umlatt/development?style=social)](https://github.com/Umlatt/development/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/Umlatt/development?style=social)](https://github.com/Umlatt/development/network/members)
-[![GitHub issues](https://img.shields.io/github/issues/Umlatt/development)](https://github.com/Umlatt/development/issues)
-[![GitHub pull requests](https://img.shields.io/github/issues-pr/Umlatt/development)](https://github.com/Umlatt/development/pulls)
+[![GitHub stars](https://img.shields.io/github/stars/Umlatt/GeoTrace?style=social)](https://github.com/Umlatt/GeoTrace/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/Umlatt/GeoTrace?style=social)](https://github.com/Umlatt/GeoTrace/network/members)
+[![GitHub issues](https://img.shields.io/github/issues/Umlatt/GeoTrace)](https://github.com/Umlatt/GeoTrace/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/Umlatt/GeoTrace)](https://github.com/Umlatt/GeoTrace/pulls)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 
@@ -47,7 +47,7 @@ GeoTrace runs a continuous traceroute (like `mtr`) and plots every hop on a real
 
 ```bash
 # Clone the repository
-git clone https://github.com/Umlatt/development.git
+git clone https://github.com/Umlatt/GeoTrace.git
 cd development/geotrace
 
 # Place the GeoLite2 database
