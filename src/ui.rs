@@ -1,0 +1,649 @@
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
+    Frame,
+};
+use std::net::IpAddr;
+
+use crate::geodata;
+
+#[derive(Debug, Clone, Default)]
+pub struct HopInfo {
+    pub hop_num: u8,
+    pub ip: Option<IpAddr>,
+    pub hostname: Option<String>,
+    pub last_rtt: Option<f64>,
+    pub rtt_history: Vec<f64>,
+    pub loss_pct: f64,
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub city: Option<String>,
+    pub org: Option<String>,
+    pub timeout: bool,
+    pub sent: u32,
+    pub lost: u32,
+    pub location_estimated: bool,
+}
+
+#[derive(Debug)]
+pub struct AppState {
+    pub hops: Vec<HopInfo>,
+    pub trace_complete: bool,
+    pub polylines: Vec<geodata::Polyline>,
+    pub status: Option<String>,
+    /// Current viewport bounds for animated zoom
+    pub view_min_lat: f64,
+    pub view_max_lat: f64,
+    pub view_min_lon: f64,
+    pub view_max_lon: f64,
+    /// Target viewport (computed from hop coords once trace is complete)
+    pub target_min_lat: Option<f64>,
+    pub target_max_lat: Option<f64>,
+    pub target_min_lon: Option<f64>,
+    pub target_max_lon: Option<f64>,
+    /// Home viewport (saved from first autozoom for spacebar reset)
+    pub home_min_lat: Option<f64>,
+    pub home_max_lat: Option<f64>,
+    pub home_min_lon: Option<f64>,
+    pub home_max_lon: Option<f64>,
+    /// Show help popup
+    pub show_help: bool,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            hops: Vec::new(),
+            trace_complete: false,
+            polylines: Vec::new(),
+            status: None,
+            // Start with full world view
+            view_min_lat: -90.0,
+            view_max_lat: 90.0,
+            view_min_lon: -180.0,
+            view_max_lon: 180.0,
+            target_min_lat: None,
+            target_max_lat: None,
+            target_min_lon: None,
+            target_max_lon: None,
+            home_min_lat: None,
+            home_max_lat: None,
+            home_min_lon: None,
+            home_max_lon: None,
+            show_help: true,
+        }
+    }
+}
+
+pub fn draw(f: &mut Frame, state: &AppState) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(f.area());
+
+    draw_sidebar(f, state, chunks[0]);
+
+    if let Some(ref status) = state.status {
+        let map_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(chunks[1]);
+        draw_map(f, state, map_chunks[0]);
+        let status_line = Paragraph::new(status.as_str())
+            .style(Style::default().fg(Color::Red).bg(Color::Black));
+        f.render_widget(status_line, map_chunks[1]);
+    } else {
+        draw_map(f, state, chunks[1]);
+    }
+
+    if state.show_help {
+        draw_help_popup(f);
+    }
+}
+
+fn draw_help_popup(f: &mut Frame) {
+    let help_lines = vec![
+        Line::from(Span::styled("  Controls", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  +/=       ", Style::default().fg(Color::White)),
+            Span::styled("Zoom in", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled("  -/_       ", Style::default().fg(Color::White)),
+            Span::styled("Zoom out", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Arrows    ", Style::default().fg(Color::White)),
+            Span::styled("Pan map", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Space     ", Style::default().fg(Color::White)),
+            Span::styled("Reset to auto-zoom", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled("  ?         ", Style::default().fg(Color::White)),
+            Span::styled("Show this help", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled("  q / Esc   ", Style::default().fg(Color::White)),
+            Span::styled("Quit", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("  Press any key to dismiss", Style::default().fg(Color::DarkGray))),
+    ];
+
+    let popup_height = help_lines.len() as u16 + 2; // +2 for border
+    let popup_width = 38;
+    let area = f.area();
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width.min(area.width), popup_height.min(area.height));
+
+    f.render_widget(Clear, popup_area);
+    let popup = Paragraph::new(help_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Help ")
+                .style(Style::default().fg(Color::White)),
+        );
+    f.render_widget(popup, popup_area);
+}
+
+fn draw_sidebar(f: &mut Frame, state: &AppState, area: Rect) {
+    // Split sidebar into route table + legend box
+    // Legend: 6 color rows + 2 border = 8 lines
+    let sidebar_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(6), Constraint::Length(8)])
+        .split(area);
+
+    draw_route_table(f, state, sidebar_chunks[0]);
+    draw_legend(f, sidebar_chunks[1]);
+}
+
+fn draw_route_table(f: &mut Frame, state: &AppState, area: Rect) {
+    let header = Row::new(vec![
+        Cell::from("Hop"),
+        Cell::from("IP"),
+        Cell::from("Snt"),
+        Cell::from("Loss%"),
+        Cell::from("RTT"),
+        Cell::from("Location"),
+    ])
+    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+
+    let rows: Vec<Row> = state
+        .hops
+        .iter()
+        .filter(|h| h.sent > 0)
+        .map(|hop| {
+            let rtt_color = rtt_to_color(hop.last_rtt);
+            let ip_str = hop
+                .ip
+                .map(|ip| ip.to_string())
+                .unwrap_or_else(|| "*".to_string());
+            let rtt_str = hop
+                .last_rtt
+                .map(|r| format!("{:.1}ms", r))
+                .unwrap_or_else(|| "*".to_string());
+            let coords_str = match (hop.lat, hop.lon) {
+                (Some(lat), Some(lon)) => format!("[{:.2},{:.2}] ", lat, lon),
+                _ => String::new(),
+            };
+            let loc = match (&hop.city, &hop.org) {
+                (Some(c), Some(o)) => format!("{}{}/{}", coords_str, c, o),
+                (Some(c), None) => format!("{}{}", coords_str, c),
+                (None, Some(o)) => format!("{}{}", coords_str, o),
+                _ => coords_str,
+            };
+            let ip_color = Color::White;
+            let loc_color = if hop.location_estimated {
+                Color::Rgb(140, 140, 140)
+            } else {
+                Color::White
+            };
+
+            Row::new(vec![
+                Cell::from(format!("{:>2}", hop.hop_num)),
+                Cell::from(ip_str).style(Style::default().fg(ip_color)),
+                Cell::from(format!("{}", hop.sent)),
+                Cell::from(format!("{:.0}%", hop.loss_pct)),
+                Cell::from(rtt_str).style(Style::default().fg(rtt_color)),
+                Cell::from(loc).style(Style::default().fg(loc_color)),
+            ])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(4),
+        Constraint::Length(16),
+        Constraint::Length(5),
+        Constraint::Length(6),
+        Constraint::Length(10),
+        Constraint::Min(12),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Route ")
+        );
+
+    f.render_widget(table, area);
+}
+
+fn draw_legend(f: &mut Frame, area: Rect) {
+    let mismatch_gray = Color::Rgb(140, 140, 140);
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled(" ■", Style::default().fg(Color::Rgb(0, 100, 255))),
+            Span::styled("  < 1ms    ", Style::default().fg(Color::DarkGray)),
+            Span::styled("■", Style::default().fg(Color::Rgb(255, 140, 0))),
+            Span::styled("  < 150ms", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" ■", Style::default().fg(Color::Rgb(0, 180, 255))),
+            Span::styled("  < 5ms    ", Style::default().fg(Color::DarkGray)),
+            Span::styled("■", Style::default().fg(Color::Rgb(255, 80, 0))),
+            Span::styled("  < 200ms", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" ■", Style::default().fg(Color::Rgb(0, 210, 180))),
+            Span::styled("  < 15ms   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("■", Style::default().fg(Color::Rgb(255, 30, 0))),
+            Span::styled("  < 300ms", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" ■", Style::default().fg(Color::Rgb(0, 200, 80))),
+            Span::styled("  < 30ms   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("■", Style::default().fg(Color::Rgb(200, 0, 0))),
+            Span::styled("  > 300ms", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" ■", Style::default().fg(Color::Rgb(180, 220, 0))),
+            Span::styled("  < 60ms   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("■", Style::default().fg(Color::Black)),
+            Span::styled("  timeout", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
+            Span::styled(" ■", Style::default().fg(Color::Rgb(255, 200, 0))),
+            Span::styled("  < 100ms  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("■", Style::default().fg(mismatch_gray)),
+            Span::styled("  mismatch", Style::default().fg(Color::DarkGray)),
+        ]),
+    ];
+
+    // Pad to fill the box
+    while lines.len() < (area.height.saturating_sub(2)) as usize {
+        lines.push(Line::from(""));
+    }
+
+    let legend = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Legend ")
+        );
+    f.render_widget(legend, area);
+}
+
+fn draw_map(f: &mut Frame, state: &AppState, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Map ")
+        .title_bottom(
+            Line::from(Span::styled(" GeoTrace 1.0.1 ", Style::default().fg(Color::White)))
+                .alignment(Alignment::Right),
+        );
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.width < 4 || inner.height < 4 {
+        return;
+    }
+
+    // Collect hop coordinates + estimated flag
+    let coords: Vec<(f64, f64, Option<f64>, bool)> = state
+        .hops
+        .iter()
+        .filter(|h| h.lat.is_some() && h.lon.is_some())
+        .map(|h| (h.lat.unwrap(), h.lon.unwrap(), h.last_rtt, h.location_estimated))
+        .collect();
+
+    // Braille canvas: each cell is 2 wide x 4 tall in dot space
+    let canvas_w = inner.width as usize * 2;
+    let canvas_h = inner.height as usize * 4;
+
+    // Use the current animated viewport
+    let min_lat = state.view_min_lat;
+    let max_lat = state.view_max_lat;
+    let min_lon = state.view_min_lon;
+    let max_lon = state.view_max_lon;
+
+    let lat_span = max_lat - min_lat;
+    let lon_span = max_lon - min_lon;
+
+    if lat_span <= 0.0 || lon_span <= 0.0 {
+        return;
+    }
+
+    // Equirectangular projection: lon -> x, lat -> y (inverted for terminal)
+    let map_to_canvas = |lat: f64, lon: f64| -> (i32, i32) {
+        let nx = (lon - min_lon) / lon_span;
+        let ny = 1.0 - (lat - min_lat) / lat_span;
+        let x = (nx * (canvas_w as f64 - 1.0)).round() as i32;
+        let y = (ny * (canvas_h as f64 - 1.0)).round() as i32;
+        (x, y)
+    };
+
+    let clamp_canvas = |x: i32, y: i32| -> (usize, usize) {
+        (
+            x.clamp(0, (canvas_w - 1) as i32) as usize,
+            y.clamp(0, (canvas_h - 1) as i32) as usize,
+        )
+    };
+
+    // Braille dot buffer + color buffer (per cell)
+    let cell_cols = inner.width as usize;
+    let cell_rows = inner.height as usize;
+    let mut dots = vec![vec![false; canvas_w]; canvas_h];
+    // Color layers: base is DarkGray for borders, overwritten by hop colors
+    let mut cell_colors = vec![vec![Color::DarkGray; cell_cols]; cell_rows];
+
+    // Determine visible detail level based on zoom
+    let max_level = geodata::visible_levels(lat_span, lon_span);
+
+    // Draw geographic borders
+    let border_color_for_level = |level: u8| -> Color {
+        match level {
+            0 => Color::DarkGray,           // coastlines
+            1 => Color::Rgb(100, 100, 100), // country borders
+            _ => Color::Rgb(70, 70, 70),    // state/province
+        }
+    };
+
+    for polyline in &state.polylines {
+        if polyline.level > max_level {
+            continue;
+        }
+
+        let color = border_color_for_level(polyline.level);
+
+        for i in 0..polyline.points.len().saturating_sub(1) {
+            let (lat0, lon0) = polyline.points[i];
+            let (lat1, lon1) = polyline.points[i + 1];
+
+            // Skip segments completely outside viewport (with margin)
+            let seg_min_lat = lat0.min(lat1);
+            let seg_max_lat = lat0.max(lat1);
+            let seg_min_lon = lon0.min(lon1);
+            let seg_max_lon = lon0.max(lon1);
+
+            if seg_max_lat < min_lat || seg_min_lat > max_lat
+                || seg_max_lon < min_lon || seg_min_lon > max_lon
+            {
+                continue;
+            }
+
+            // Skip very long segments that wrap around (> 90° longitude jump)
+            if (lon1 - lon0).abs() > 90.0 {
+                continue;
+            }
+
+            let (x0, y0) = map_to_canvas(lat0, lon0);
+            let (x1, y1) = map_to_canvas(lat1, lon1);
+
+            // Clip to canvas bounds
+            let (cx0, cy0) = clamp_canvas(x0, y0);
+            let (cx1, cy1) = clamp_canvas(x1, y1);
+
+            draw_line_aa(&mut dots, cx0, cy0, cx1, cy1, canvas_w, canvas_h);
+
+            // Set border color for affected cells
+            set_line_color(&mut cell_colors, cx0, cy0, cx1, cy1, color, cell_cols, cell_rows);
+        }
+    }
+
+    // Draw route lines between consecutive hops (color reflects RTT)
+    let hop_coords: Vec<(i32, i32, bool, Option<f64>)> = coords
+        .iter()
+        .map(|&(lat, lon, rtt, estimated)| {
+            let (x, y) = map_to_canvas(lat, lon);
+            (x, y, estimated, rtt)
+        })
+        .collect();
+    for i in 0..hop_coords.len().saturating_sub(1) {
+        let (x0, y0) = clamp_canvas(hop_coords[i].0, hop_coords[i].1);
+        let (x1, y1) = clamp_canvas(hop_coords[i + 1].0, hop_coords[i + 1].1);
+        // Always use RTT color for segments (even estimated hops)
+        let seg_color = rtt_to_color(hop_coords[i + 1].3);
+        draw_line_thick(&mut dots, x0, y0, x1, y1, canvas_w, canvas_h);
+        set_line_color(&mut cell_colors, x0, y0, x1, y1, seg_color, cell_cols, cell_rows);
+    }
+
+    // Track cell-level pin overlay: (cell_col, cell_row, color) for '@' markers
+    let mut pin_cells: Vec<(usize, usize, Color)> = Vec::new();
+
+    // Draw hop pins and set colors
+    for &(lat, lon, rtt, estimated) in coords.iter() {
+        let (px, py) = map_to_canvas(lat, lon);
+        let color = if estimated {
+            Color::Rgb(140, 140, 140) // lighter gray for estimated/suspect locations
+        } else {
+            rtt_to_color(rtt)
+        };
+
+        // Mark the cell containing this pin for '@' overlay
+        let cx = (px.clamp(0, (canvas_w - 1) as i32) as usize) / 2;
+        let cy = (py.clamp(0, (canvas_h - 1) as i32) as usize) / 4;
+        if cx < cell_cols && cy < cell_rows {
+            pin_cells.push((cx, cy, color));
+        }
+    }
+
+    // Render braille characters
+    let mut lines: Vec<Line> = Vec::with_capacity(cell_rows);
+    for row in 0..cell_rows {
+        let mut spans: Vec<Span> = Vec::with_capacity(cell_cols);
+        for col in 0..cell_cols {
+            let base_x = col * 2;
+            let base_y = row * 4;
+
+            let mut code: u32 = 0x2800;
+            let offsets = [
+                (0, 0, 0x01),
+                (0, 1, 0x02),
+                (0, 2, 0x04),
+                (1, 0, 0x08),
+                (1, 1, 0x10),
+                (1, 2, 0x20),
+                (0, 3, 0x40),
+                (1, 3, 0x80),
+            ];
+            for &(dx, dy, bit) in &offsets {
+                let x = base_x + dx;
+                let y = base_y + dy;
+                if x < canvas_w && y < canvas_h && dots[y][x] {
+                    code |= bit;
+                }
+            }
+            let ch = char::from_u32(code).unwrap_or(' ');
+            let color = cell_colors[row][col];
+
+            // Check if this cell has a pin overlay
+            let is_pin = pin_cells.iter().any(|&(pc, pr, _)| pc == col && pr == row);
+            if is_pin {
+                let pin_color = pin_cells.iter()
+                    .rev()
+                    .find(|&&(pc, pr, _)| pc == col && pr == row)
+                    .map(|&(_, _, c)| c)
+                    .unwrap_or(color);
+                spans.push(Span::styled(
+                    "@".to_string(),
+                    Style::default().fg(pin_color),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(color),
+                ));
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+
+    let paragraph = Paragraph::new(lines);
+    f.render_widget(paragraph, inner);
+
+    // Compass legend in top-right corner of the map
+    if inner.width >= 10 && inner.height >= 5 {
+        let compass_text = vec![
+            Line::from(Span::styled("  N  ", Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled("W + E", Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled("  S  ", Style::default().fg(Color::Yellow))),
+        ];
+        let compass_area = Rect::new(
+            inner.x + inner.width - 7,
+            inner.y,
+            7,
+            3,
+        );
+        let compass = Paragraph::new(compass_text);
+        f.render_widget(compass, compass_area);
+    }
+}
+
+/// Xiaolin Wu-style anti-aliased line for binary Braille dots.
+/// Plots neighbor dots on diagonals for smoother curves.
+fn draw_line_aa(dots: &mut [Vec<bool>], x0: usize, y0: usize, x1: usize, y1: usize, w: usize, h: usize) {
+    let (x0f, y0f, x1f, y1f) = (x0 as f64, y0 as f64, x1 as f64, y1 as f64);
+
+    let dx = (x1f - x0f).abs();
+    let dy = (y1f - y0f).abs();
+    let steep = dy > dx;
+
+    // If steep, transpose so we always iterate along the longer axis
+    let (x0f, y0f, x1f, y1f) = if steep {
+        (y0f, x0f, y1f, x1f)
+    } else {
+        (x0f, y0f, x1f, y1f)
+    };
+
+    // Ensure left-to-right
+    let (x0f, y0f, x1f, y1f) = if x0f > x1f {
+        (x1f, y1f, x0f, y0f)
+    } else {
+        (x0f, y0f, x1f, y1f)
+    };
+
+    let dxf = x1f - x0f;
+    let dyf = y1f - y0f;
+    let gradient = if dxf < 0.5 { dyf.signum() } else { dyf / dxf };
+
+    let plot = |dots: &mut [Vec<bool>], px: i32, py: i32| {
+        let (rx, ry) = if steep { (py, px) } else { (px, py) };
+        if rx >= 0 && (rx as usize) < w && ry >= 0 && (ry as usize) < h {
+            dots[ry as usize][rx as usize] = true;
+        }
+    };
+
+    let ix0 = x0f.round() as i32;
+    let ix1 = x1f.round() as i32;
+    let mut intery = y0f + gradient * (ix0 as f64 - x0f);
+
+    for x in ix0..=ix1 {
+        let iy = intery.floor() as i32;
+        let frac = intery - intery.floor();
+
+        plot(dots, x, iy);
+        // Plot neighbor pixel when fractional offset is significant
+        if frac >= 0.3 {
+            plot(dots, x, iy + 1);
+        }
+
+        intery += gradient;
+    }
+}
+
+/// Draw a thick (2-dot) line for route paths: main line + 1px perpendicular offset
+fn draw_line_thick(dots: &mut [Vec<bool>], x0: usize, y0: usize, x1: usize, y1: usize, w: usize, h: usize) {
+    draw_line_aa(dots, x0, y0, x1, y1, w, h);
+
+    let dx = (x1 as f64 - x0 as f64).abs();
+    let dy = (y1 as f64 - y0 as f64).abs();
+
+    // Offset perpendicular to the dominant direction
+    if dy > dx {
+        // Mostly vertical: offset in X
+        let offset = |v: usize| -> usize { (v + 1).min(w.saturating_sub(1)) };
+        draw_line_aa(dots, offset(x0), y0, offset(x1), y1, w, h);
+    } else {
+        // Mostly horizontal: offset in Y
+        let offset = |v: usize| -> usize { (v + 1).min(h.saturating_sub(1)) };
+        draw_line_aa(dots, x0, offset(y0), x1, offset(y1), w, h);
+    }
+}
+
+/// Set cell colors along a Bresenham line path
+fn set_line_color(
+    cell_colors: &mut [Vec<Color>],
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+    color: Color,
+    cell_cols: usize,
+    cell_rows: usize,
+) {
+    let (mut x, mut y) = (x0 as i32, y0 as i32);
+    let (ex, ey) = (x1 as i32, y1 as i32);
+    let dx = (ex - x).abs();
+    let dy = -(ey - y).abs();
+    let sx = if x < ex { 1 } else { -1 };
+    let sy = if y < ey { 1 } else { -1 };
+    let mut err = dx + dy;
+
+    loop {
+        let cx = (x as usize) / 2;
+        let cy = (y as usize) / 4;
+        if cx < cell_cols && cy < cell_rows {
+            cell_colors[cy][cx] = color;
+        }
+        if x == ex && y == ey {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+fn rtt_to_color(rtt: Option<f64>) -> Color {
+    match rtt {
+        None => Color::Black,                    // timeout — black
+        Some(r) if r < 1.0   => Color::Rgb(0, 100, 255),    // <1ms — deep blue (coldest)
+        Some(r) if r < 5.0   => Color::Rgb(0, 180, 255),    // <5ms — cyan-blue
+        Some(r) if r < 15.0  => Color::Rgb(0, 210, 180),    // <15ms — teal
+        Some(r) if r < 30.0  => Color::Rgb(0, 200, 80),     // <30ms — green
+        Some(r) if r < 60.0  => Color::Rgb(180, 220, 0),    // <60ms — yellow-green
+        Some(r) if r < 100.0 => Color::Rgb(255, 200, 0),    // <100ms — yellow-orange
+        Some(r) if r < 150.0 => Color::Rgb(255, 140, 0),    // <150ms — orange
+        Some(r) if r < 200.0 => Color::Rgb(255, 80, 0),     // <200ms — red-orange
+        Some(r) if r < 300.0 => Color::Rgb(255, 30, 0),     // <300ms — red
+        Some(_) => Color::Rgb(200, 0, 0),                    // 300ms+ — dark red (hottest)
+    }
+}

@@ -1,0 +1,29 @@
+[package]
+name = "geotrace"
+version = "1.0.1"
+edition = "2021"
+description = "A geographical mtr clone with Braille-rendered world map in the terminal"
+license = "MIT"
+repository = "https://github.com/Umlatt/development"
+readme = "README.md"
+
+[[bin]]
+name = "geotrace"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+ratatui = { version = "0.28", features = ["crossterm"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+clap = { version = "4", features = ["derive"] }
+maxminddb = "0.24"
+pnet = "0.34"
+pnet_packet = "0.34"
+dns-lookup = "2"
+rand = "0.8"
+futures = "0.3"
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
