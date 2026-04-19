@@ -32,6 +32,8 @@ pub struct AppState {
     pub hops: Vec<HopInfo>,
     pub trace_complete: bool,
     pub polylines: Vec<geodata::Polyline>,
+    #[allow(dead_code)]
+    pub labels: Vec<geodata::TerritoryLabel>,
     pub status: Option<String>,
     /// Current viewport bounds for animated zoom
     pub view_min_lat: f64,
@@ -50,6 +52,8 @@ pub struct AppState {
     pub home_max_lon: Option<f64>,
     /// Show help popup
     pub show_help: bool,
+    /// Use metric (true) or imperial (false)
+    pub use_metric: bool,
 }
 
 impl Default for AppState {
@@ -58,6 +62,7 @@ impl Default for AppState {
             hops: Vec::new(),
             trace_complete: false,
             polylines: Vec::new(),
+            labels: Vec::new(),
             status: None,
             // Start with full world view
             view_min_lat: -90.0,
@@ -72,7 +77,8 @@ impl Default for AppState {
             home_max_lat: None,
             home_min_lon: None,
             home_max_lon: None,
-            show_help: true,
+            show_help: false,
+            use_metric: true,
         }
     }
 }
@@ -124,6 +130,10 @@ fn draw_help_popup(f: &mut Frame) {
             Span::styled("Reset to auto-zoom", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(vec![
+            Span::styled("  u         ", Style::default().fg(Color::White)),
+            Span::styled("Toggle km / miles", Style::default().fg(Color::DarkGray)),
+        ]),
+        Line::from(vec![
             Span::styled("  ?         ", Style::default().fg(Color::White)),
             Span::styled("Show this help", Style::default().fg(Color::DarkGray)),
         ]),
@@ -131,6 +141,15 @@ fn draw_help_popup(f: &mut Frame) {
             Span::styled("  q / Esc   ", Style::default().fg(Color::White)),
             Span::styled("Quit", Style::default().fg(Color::DarkGray)),
         ]),
+        Line::from(""),
+        Line::from(Span::styled("  Mismatch", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(""),
+        Line::from(Span::styled("  A location marked (mismatch)", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  means the reported geo-IP", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  location does not align with", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  the network latency. This can", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  indicate a VPN, CDN, anycast,", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  or stale geo-IP record.", Style::default().fg(Color::DarkGray))),
         Line::from(""),
         Line::from(Span::styled("  Press any key to dismiss", Style::default().fg(Color::DarkGray))),
     ];
@@ -162,15 +181,15 @@ fn draw_sidebar(f: &mut Frame, state: &AppState, area: Rect) {
         .split(area);
 
     draw_route_table(f, state, sidebar_chunks[0]);
-    draw_legend(f, sidebar_chunks[1]);
+    draw_legend(f, state, sidebar_chunks[1]);
 }
 
 fn draw_route_table(f: &mut Frame, state: &AppState, area: Rect) {
     let header = Row::new(vec![
-        Cell::from("Hop"),
+        Cell::from("#"),
         Cell::from("IP"),
         Cell::from("Snt"),
-        Cell::from("Loss%"),
+        Cell::from("Ls%"),
         Cell::from("RTT"),
         Cell::from("Location"),
     ])
@@ -194,11 +213,16 @@ fn draw_route_table(f: &mut Frame, state: &AppState, area: Rect) {
                 (Some(lat), Some(lon)) => format!("[{:.2},{:.2}] ", lat, lon),
                 _ => String::new(),
             };
-            let loc = match (&hop.city, &hop.org) {
+            let loc_base = match (&hop.city, &hop.org) {
                 (Some(c), Some(o)) => format!("{}{}/{}", coords_str, c, o),
                 (Some(c), None) => format!("{}{}", coords_str, c),
                 (None, Some(o)) => format!("{}{}", coords_str, o),
                 _ => coords_str,
+            };
+            let loc = if hop.location_estimated && !loc_base.is_empty() {
+                format!("{} (mismatch)", loc_base)
+            } else {
+                loc_base
             };
             let ip_color = Color::White;
             let loc_color = if hop.location_estimated {
@@ -219,12 +243,12 @@ fn draw_route_table(f: &mut Frame, state: &AppState, area: Rect) {
         .collect();
 
     let widths = [
+        Constraint::Length(3),
+        Constraint::Length(15),
         Constraint::Length(4),
-        Constraint::Length(16),
-        Constraint::Length(5),
-        Constraint::Length(6),
-        Constraint::Length(10),
-        Constraint::Min(12),
+        Constraint::Length(4),
+        Constraint::Length(8),
+        Constraint::Min(10),
     ];
 
     let table = Table::new(rows, widths)
@@ -232,13 +256,13 @@ fn draw_route_table(f: &mut Frame, state: &AppState, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Route ")
+                .title(" Hops ")
         );
 
     f.render_widget(table, area);
 }
 
-fn draw_legend(f: &mut Frame, area: Rect) {
+fn draw_legend(f: &mut Frame, _state: &AppState, area: Rect) {
     let mismatch_gray = Color::Rgb(140, 140, 140);
 
     let mut lines: Vec<Line> = vec![
@@ -290,17 +314,102 @@ fn draw_legend(f: &mut Frame, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" Legend ")
+                .title_bottom(
+                    Line::from(vec![
+                        Span::styled(" ? ", Style::default().fg(Color::Yellow)),
+                        Span::styled("Help ", Style::default().fg(Color::DarkGray)),
+                    ]).alignment(Alignment::Left),
+                )
         );
     f.render_widget(legend, area);
 }
 
+fn format_distance(km: f64, use_metric: bool) -> String {
+    if use_metric {
+        if km >= 1000.0 {
+            format!("{:.0}km", km)
+        } else if km >= 1.0 {
+            format!("{:.1}km", km)
+        } else {
+            format!("{:.0}m", km * 1000.0)
+        }
+    } else {
+        let miles = km * 0.621371;
+        if miles >= 1000.0 {
+            format!("{:.0}mi", miles)
+        } else if miles >= 1.0 {
+            format!("{:.1}mi", miles)
+        } else {
+            format!("{:.0}ft", miles * 5280.0)
+        }
+    }
+}
+
+fn hop_location_name(hop: &HopInfo) -> Option<String> {
+    // Try city first, then org, then IP-based fallback
+    if let Some(ref city) = hop.city {
+        return Some(city.clone());
+    }
+    if let Some(ref org) = hop.org {
+        return Some(org.clone());
+    }
+    if let Some(ip) = hop.ip {
+        return Some(ip.to_string());
+    }
+    None
+}
+
 fn draw_map(f: &mut Frame, state: &AppState, area: Rect) {
+    let center_lat = (state.view_min_lat + state.view_max_lat) / 2.0;
+
+    // Build source name with fallback: city -> org -> IP
+    let source_hop = state.hops.iter().find(|h| h.lat.is_some());
+    let source_name = source_hop
+        .and_then(hop_location_name)
+        .unwrap_or_else(|| "Source".to_string());
+    let source_mismatch = source_hop.map_or(false, |h| h.location_estimated);
+
+    // Build destination name with fallback: city -> org -> IP
+    let dest_hop = state.hops.iter().rev().find(|h| h.lat.is_some());
+    let dest_name = dest_hop
+        .and_then(hop_location_name)
+        .unwrap_or_else(|| "Destination".to_string());
+    let dest_mismatch = dest_hop.map_or(false, |h| h.location_estimated);
+
+    let journey_km = compute_journey_distance(&state.hops);
+    let journey_str = if journey_km >= 1.0 {
+        format!(" [{}]", format_distance(journey_km, state.use_metric))
+    } else {
+        String::new()
+    };
+
+    let mut title_spans = vec![
+        Span::styled(" Route from ", Style::default().fg(Color::White)),
+        Span::styled(&source_name, Style::default().fg(Color::Yellow)),
+    ];
+    if source_mismatch {
+        title_spans.push(Span::styled(" (mismatch)", Style::default().fg(Color::DarkGray)));
+    }
+    title_spans.push(Span::styled(" to ", Style::default().fg(Color::White)));
+    title_spans.push(Span::styled(&dest_name, Style::default().fg(Color::Yellow)));
+    if dest_mismatch {
+        title_spans.push(Span::styled(" (mismatch)", Style::default().fg(Color::DarkGray)));
+    }
+    title_spans.push(Span::styled(journey_str, Style::default().fg(Color::DarkGray)));
+    title_spans.push(Span::styled(" ", Style::default()));
+    let title_spans = Line::from(title_spans);
+
+    let unit_label = if state.use_metric { "km" } else { "mi" };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Map ")
+        .title(title_spans)
         .title_bottom(
-            Line::from(Span::styled(" GeoTrace 1.0.1 ", Style::default().fg(Color::White)))
-                .alignment(Alignment::Right),
+            Line::from(vec![
+                Span::styled(" GeoTrace 1.0.1 ", Style::default().fg(Color::White)),
+                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+                Span::styled("u", Style::default().fg(Color::Yellow)),
+                Span::styled(format!(":{} ", unit_label), Style::default().fg(Color::DarkGray)),
+            ]).alignment(Alignment::Right),
         );
 
     let inner = block.inner(area);
@@ -366,7 +475,8 @@ fn draw_map(f: &mut Frame, state: &AppState, area: Rect) {
         match level {
             0 => Color::DarkGray,           // coastlines
             1 => Color::Rgb(100, 100, 100), // country borders
-            _ => Color::Rgb(70, 70, 70),    // state/province
+            2 => Color::Rgb(70, 70, 70),    // state/province
+            _ => Color::Rgb(55, 55, 55),    // admin-2 / county
         }
     };
 
@@ -503,18 +613,23 @@ fn draw_map(f: &mut Frame, state: &AppState, area: Rect) {
     let paragraph = Paragraph::new(lines);
     f.render_widget(paragraph, inner);
 
-    // Compass legend in top-right corner of the map
-    if inner.width >= 10 && inner.height >= 5 {
+    // Compass legend + scale in top-right corner of the map
+    if inner.width >= 10 && inner.height >= 6 {
+        let width_km = lon_span * center_lat.to_radians().cos().abs() * 111.32;
+        let scale_str = format!("~{}", format_distance(width_km, state.use_metric));
+
         let compass_text = vec![
-            Line::from(Span::styled("  N  ", Style::default().fg(Color::Yellow))),
-            Line::from(Span::styled("W + E", Style::default().fg(Color::Yellow))),
-            Line::from(Span::styled("  S  ", Style::default().fg(Color::Yellow))),
+            Line::from(Span::styled("  N  ", Style::default().fg(Color::Yellow))).centered(),
+            Line::from(Span::styled("W + E", Style::default().fg(Color::Yellow))).centered(),
+            Line::from(Span::styled("  S  ", Style::default().fg(Color::Yellow))).centered(),
+            Line::from(Span::styled(&scale_str, Style::default().fg(Color::Yellow))).centered(),
         ];
+        let cw = 9_u16.max(scale_str.len() as u16 + 2);
         let compass_area = Rect::new(
-            inner.x + inner.width - 7,
+            inner.x + inner.width.saturating_sub(cw),
             inner.y,
-            7,
-            3,
+            cw.min(inner.width),
+            4,
         );
         let compass = Paragraph::new(compass_text);
         f.render_widget(compass, compass_area);
@@ -630,6 +745,34 @@ fn set_line_color(
             y += sy;
         }
     }
+}
+
+/// Compute total journey distance in km using the haversine formula
+/// between consecutive hops that have coordinates.
+fn compute_journey_distance(hops: &[HopInfo]) -> f64 {
+    let coords: Vec<(f64, f64)> = hops
+        .iter()
+        .filter_map(|h| match (h.lat, h.lon) {
+            (Some(lat), Some(lon)) => Some((lat, lon)),
+            _ => None,
+        })
+        .collect();
+
+    let mut total = 0.0;
+    for i in 0..coords.len().saturating_sub(1) {
+        total += haversine_km(coords[i].0, coords[i].1, coords[i + 1].0, coords[i + 1].1);
+    }
+    total
+}
+
+fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let r = 6371.0; // Earth radius in km
+    let dlat = (lat2 - lat1).to_radians();
+    let dlon = (lon2 - lon1).to_radians();
+    let a = (dlat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (dlon / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().asin();
+    r * c
 }
 
 fn rtt_to_color(rtt: Option<f64>) -> Color {

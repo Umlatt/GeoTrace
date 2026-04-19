@@ -33,9 +33,10 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let geo = Arc::new(geoip::GeoIpLookup::from_bytes(MMDB_DATA)?);
-    let polylines = geodata::load_polylines();
+    let (polylines, labels) = geodata::load_geodata();
     let state = Arc::new(Mutex::new(ui::AppState {
         polylines,
+        labels,
         ..Default::default()
     }));
 
@@ -195,10 +196,10 @@ async fn main() -> anyhow::Result<()> {
                             st.show_help = true;
                         }
                         KeyCode::Char('+') | KeyCode::Char('=') => {
-                            // Zoom in (shrink viewport by 20% toward center)
+                            // Zoom in (shrink viewport by 30% toward center)
                             let mut st = state.lock().unwrap();
-                            let lat_shrink = (st.view_max_lat - st.view_min_lat) * 0.1;
-                            let lon_shrink = (st.view_max_lon - st.view_min_lon) * 0.1;
+                            let lat_shrink = (st.view_max_lat - st.view_min_lat) * 0.15;
+                            let lon_shrink = (st.view_max_lon - st.view_min_lon) * 0.15;
                             st.view_min_lat += lat_shrink;
                             st.view_max_lat -= lat_shrink;
                             st.view_min_lon += lon_shrink;
@@ -210,10 +211,10 @@ async fn main() -> anyhow::Result<()> {
                             st.target_max_lon = None;
                         }
                         KeyCode::Char('-') | KeyCode::Char('_') => {
-                            // Zoom out (grow viewport by 20% from center)
+                            // Zoom out (grow viewport by 30% from center)
                             let mut st = state.lock().unwrap();
-                            let lat_grow = (st.view_max_lat - st.view_min_lat) * 0.1;
-                            let lon_grow = (st.view_max_lon - st.view_min_lon) * 0.1;
+                            let lat_grow = (st.view_max_lat - st.view_min_lat) * 0.15;
+                            let lon_grow = (st.view_max_lon - st.view_min_lon) * 0.15;
                             st.view_min_lat = (st.view_min_lat - lat_grow).max(-90.0);
                             st.view_max_lat = (st.view_max_lat + lat_grow).min(90.0);
                             st.view_min_lon = (st.view_min_lon - lon_grow).max(-180.0);
@@ -283,6 +284,10 @@ async fn main() -> anyhow::Result<()> {
                                 st.target_min_lon = Some(h3);
                                 st.target_max_lon = Some(h4);
                             }
+                        }
+                        KeyCode::Char('u') => {
+                            let mut st = state.lock().unwrap();
+                            st.use_metric = !st.use_metric;
                         }
                         _ => {}
                     }
