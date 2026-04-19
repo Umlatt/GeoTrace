@@ -34,9 +34,18 @@ async fn main() -> anyhow::Result<()> {
 
     let geo = Arc::new(geoip::GeoIpLookup::from_bytes(MMDB_DATA)?);
     let (polylines, labels) = geodata::load_geodata();
+
+    // Store the DNS target name if it's not a raw IP address
+    let target_name = if args.target.parse::<std::net::IpAddr>().is_err() {
+        Some(args.target.clone())
+    } else {
+        None
+    };
+
     let state = Arc::new(Mutex::new(ui::AppState {
         polylines,
         labels,
+        target_name,
         ..Default::default()
     }));
 
@@ -131,6 +140,9 @@ async fn main() -> anyhow::Result<()> {
             if let Some(org) = update.org {
                 hop.org = Some(org);
             }
+            if let Some(country) = update.country {
+                hop.country = Some(country);
+            }
             hop.location_estimated = update.location_estimated;
             hop.timeout = update.timeout;
             hop.sent += 1;
@@ -198,6 +210,20 @@ async fn main() -> anyhow::Result<()> {
                         KeyCode::Char('+') | KeyCode::Char('=') => {
                             // Zoom in (shrink viewport by 30% toward center)
                             let mut st = state.lock().unwrap();
+                            // On first interaction, re-center on the origin hop
+                            if !st.user_interacted {
+                                st.user_interacted = true;
+                                if let Some(origin) = st.hops.iter().find(|h| h.lat.is_some() && h.lon.is_some()) {
+                                    if let (Some(lat), Some(lon)) = (origin.lat, origin.lon) {
+                                        let half_lat = (st.view_max_lat - st.view_min_lat) / 2.0;
+                                        let half_lon = (st.view_max_lon - st.view_min_lon) / 2.0;
+                                        st.view_min_lat = lat - half_lat;
+                                        st.view_max_lat = lat + half_lat;
+                                        st.view_min_lon = lon - half_lon;
+                                        st.view_max_lon = lon + half_lon;
+                                    }
+                                }
+                            }
                             let lat_shrink = (st.view_max_lat - st.view_min_lat) * 0.15;
                             let lon_shrink = (st.view_max_lon - st.view_min_lon) * 0.15;
                             st.view_min_lat += lat_shrink;
@@ -213,6 +239,9 @@ async fn main() -> anyhow::Result<()> {
                         KeyCode::Char('-') | KeyCode::Char('_') => {
                             // Zoom out (grow viewport by 30% from center)
                             let mut st = state.lock().unwrap();
+                            if !st.user_interacted {
+                                st.user_interacted = true;
+                            }
                             let lat_grow = (st.view_max_lat - st.view_min_lat) * 0.15;
                             let lon_grow = (st.view_max_lon - st.view_min_lon) * 0.15;
                             st.view_min_lat = (st.view_min_lat - lat_grow).max(-90.0);
@@ -226,6 +255,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         KeyCode::Up => {
                             let mut st = state.lock().unwrap();
+                            st.user_interacted = true;
                             let pan = (st.view_max_lat - st.view_min_lat) * 0.15;
                             if st.view_max_lat + pan <= 90.0 {
                                 st.view_min_lat += pan;
@@ -238,6 +268,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         KeyCode::Down => {
                             let mut st = state.lock().unwrap();
+                            st.user_interacted = true;
                             let pan = (st.view_max_lat - st.view_min_lat) * 0.15;
                             if st.view_min_lat - pan >= -90.0 {
                                 st.view_min_lat -= pan;
@@ -250,6 +281,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         KeyCode::Right => {
                             let mut st = state.lock().unwrap();
+                            st.user_interacted = true;
                             let pan = (st.view_max_lon - st.view_min_lon) * 0.15;
                             if st.view_max_lon + pan <= 180.0 {
                                 st.view_min_lon += pan;
@@ -262,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
                         }
                         KeyCode::Left => {
                             let mut st = state.lock().unwrap();
+                            st.user_interacted = true;
                             let pan = (st.view_max_lon - st.view_min_lon) * 0.15;
                             if st.view_min_lon - pan >= -180.0 {
                                 st.view_min_lon -= pan;

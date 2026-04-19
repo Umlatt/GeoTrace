@@ -20,6 +20,7 @@ pub struct HopInfo {
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub city: Option<String>,
+    pub country: Option<String>,
     pub org: Option<String>,
     pub timeout: bool,
     pub sent: u32,
@@ -54,6 +55,10 @@ pub struct AppState {
     pub show_help: bool,
     /// Use metric (true) or imperial (false)
     pub use_metric: bool,
+    /// Whether the user has manually zoomed/panned yet
+    pub user_interacted: bool,
+    /// Original target name (DNS name provided by user)
+    pub target_name: Option<String>,
 }
 
 impl Default for AppState {
@@ -79,6 +84,8 @@ impl Default for AppState {
             home_max_lon: None,
             show_help: false,
             use_metric: true,
+            user_interacted: false,
+            target_name: None,
         }
     }
 }
@@ -133,6 +140,7 @@ fn draw_help_popup(f: &mut Frame) {
             Span::styled("  u         ", Style::default().fg(Color::White)),
             Span::styled("Toggle km / miles", Style::default().fg(Color::DarkGray)),
         ]),
+        Line::from(Span::styled("              (distances & scale)", Style::default().fg(Color::Rgb(80, 80, 80)))),
         Line::from(vec![
             Span::styled("  ?         ", Style::default().fg(Color::White)),
             Span::styled("Show this help", Style::default().fg(Color::DarkGray)),
@@ -144,7 +152,7 @@ fn draw_help_popup(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("  Mismatch", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
         Line::from(""),
-        Line::from(Span::styled("  A location marked (mismatch)", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  A location prefixed with *", Style::default().fg(Color::DarkGray))),
         Line::from(Span::styled("  means the reported geo-IP", Style::default().fg(Color::DarkGray))),
         Line::from(Span::styled("  location does not align with", Style::default().fg(Color::DarkGray))),
         Line::from(Span::styled("  the network latency. This can", Style::default().fg(Color::DarkGray))),
@@ -220,7 +228,7 @@ fn draw_route_table(f: &mut Frame, state: &AppState, area: Rect) {
                 _ => coords_str,
             };
             let loc = if hop.location_estimated && !loc_base.is_empty() {
-                format!("{} (mismatch)", loc_base)
+                format!("*{}", loc_base)
             } else {
                 loc_base
             };
@@ -300,7 +308,7 @@ fn draw_legend(f: &mut Frame, _state: &AppState, area: Rect) {
             Span::styled(" ■", Style::default().fg(Color::Rgb(255, 200, 0))),
             Span::styled("  < 100ms  ", Style::default().fg(Color::DarkGray)),
             Span::styled("■", Style::default().fg(mismatch_gray)),
-            Span::styled("  mismatch", Style::default().fg(Color::DarkGray)),
+            Span::styled("  *mismatch", Style::default().fg(Color::DarkGray)),
         ]),
     ];
 
@@ -364,51 +372,88 @@ fn draw_map(f: &mut Frame, state: &AppState, area: Rect) {
 
     // Build source name with fallback: city -> org -> IP
     let source_hop = state.hops.iter().find(|h| h.lat.is_some());
-    let source_name = source_hop
-        .and_then(hop_location_name)
-        .unwrap_or_else(|| "Source".to_string());
     let source_mismatch = source_hop.map_or(false, |h| h.location_estimated);
 
     // Build destination name with fallback: city -> org -> IP
+    // For mismatch, show the reported city/country name
     let dest_hop = state.hops.iter().rev().find(|h| h.lat.is_some());
-    let dest_name = dest_hop
-        .and_then(hop_location_name)
-        .unwrap_or_else(|| "Destination".to_string());
     let dest_mismatch = dest_hop.map_or(false, |h| h.location_estimated);
+
+    // Determine if the route crosses international borders
+    let source_country = source_hop.and_then(|h| h.country.clone());
+    let dest_country = dest_hop.and_then(|h| h.country.clone());
+    let international = match (&source_country, &dest_country) {
+        (Some(sc), Some(dc)) => sc != dc,
+        _ => false,
+    };
+
+    let source_name = source_hop
+        .and_then(|h| {
+            let base = hop_location_name(h)?;
+            if international {
+                if let Some(ref country) = h.country {
+                    return Some(format!("{}, {}", base, country));
+                }
+            }
+            Some(base)
+        })
+        .unwrap_or_else(|| "Source".to_string());
+
+    let dest_name = dest_hop
+        .and_then(|h| {
+            // Always show the reported city name even for mismatch
+            let base = if let Some(ref city) = h.city {
+                city.clone()
+            } else if let Some(ref org) = h.org {
+                org.clone()
+            } else if let Some(ref name) = state.target_name {
+                // Prefer DNS target name over raw IP
+                name.clone()
+            } else if let Some(ip) = h.ip {
+                ip.to_string()
+            } else {
+                return None;
+            };
+            if international {
+                if let Some(ref country) = h.country {
+                    return Some(format!("{}, {}", base, country));
+                }
+            }
+            Some(base)
+        })
+        .unwrap_or_else(|| state.target_name.clone().unwrap_or_else(|| "Destination".to_string()));
 
     let journey_km = compute_journey_distance(&state.hops);
     let journey_str = if journey_km >= 1.0 {
-        format!(" [{}]", format_distance(journey_km, state.use_metric))
+        format!(" [est. {}]", format_distance(journey_km, state.use_metric))
     } else {
         String::new()
     };
 
     let mut title_spans = vec![
         Span::styled(" Route from ", Style::default().fg(Color::White)),
-        Span::styled(&source_name, Style::default().fg(Color::Yellow)),
     ];
     if source_mismatch {
-        title_spans.push(Span::styled(" (mismatch)", Style::default().fg(Color::DarkGray)));
+        title_spans.push(Span::styled(format!("*{}", source_name), Style::default().fg(Color::DarkGray)));
+    } else {
+        title_spans.push(Span::styled(&source_name, Style::default().fg(Color::Yellow)));
     }
     title_spans.push(Span::styled(" to ", Style::default().fg(Color::White)));
-    title_spans.push(Span::styled(&dest_name, Style::default().fg(Color::Yellow)));
     if dest_mismatch {
-        title_spans.push(Span::styled(" (mismatch)", Style::default().fg(Color::DarkGray)));
+        title_spans.push(Span::styled(format!("*{}", dest_name), Style::default().fg(Color::DarkGray)));
+    } else {
+        title_spans.push(Span::styled(&dest_name, Style::default().fg(Color::Yellow)));
     }
-    title_spans.push(Span::styled(journey_str, Style::default().fg(Color::DarkGray)));
+    title_spans.push(Span::styled(journey_str, Style::default().fg(Color::White)));
     title_spans.push(Span::styled(" ", Style::default()));
     let title_spans = Line::from(title_spans);
 
-    let unit_label = if state.use_metric { "km" } else { "mi" };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title_spans)
         .title_bottom(
             Line::from(vec![
-                Span::styled(" GeoTrace 1.0.1 ", Style::default().fg(Color::White)),
-                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
-                Span::styled("u", Style::default().fg(Color::Yellow)),
-                Span::styled(format!(":{} ", unit_label), Style::default().fg(Color::DarkGray)),
+                Span::styled(" GeoTrace 1.0.2 ", Style::default().fg(Color::White)),
             ]).alignment(Alignment::Right),
         );
 
@@ -747,20 +792,52 @@ fn set_line_color(
     }
 }
 
-/// Compute total journey distance in km using the haversine formula
-/// between consecutive hops that have coordinates.
+/// Average of the 3 fastest RTTs from a hop's history, or last_rtt as fallback.
+fn best_rtt(hop: &HopInfo) -> Option<f64> {
+    if hop.rtt_history.len() >= 3 {
+        let mut sorted = hop.rtt_history.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let sum: f64 = sorted[..3].iter().sum();
+        Some(sum / 3.0)
+    } else if !hop.rtt_history.is_empty() {
+        let mut sorted = hop.rtt_history.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let sum: f64 = sorted.iter().sum();
+        Some(sum / sorted.len() as f64)
+    } else {
+        hop.last_rtt
+    }
+}
+
+/// Compute total journey distance in km.
+/// For mismatch hops, estimate distance from RTT delta instead of geo-IP coordinates.
+/// RTT-based estimate: ~67 km per ms of RTT (speed of light in fiber with routing overhead).
+const RTT_KM_PER_MS: f64 = 67.0;
+
 fn compute_journey_distance(hops: &[HopInfo]) -> f64 {
-    let coords: Vec<(f64, f64)> = hops
+    let valid_hops: Vec<&HopInfo> = hops
         .iter()
-        .filter_map(|h| match (h.lat, h.lon) {
-            (Some(lat), Some(lon)) => Some((lat, lon)),
-            _ => None,
-        })
+        .filter(|h| h.lat.is_some() && h.lon.is_some())
         .collect();
 
     let mut total = 0.0;
-    for i in 0..coords.len().saturating_sub(1) {
-        total += haversine_km(coords[i].0, coords[i].1, coords[i + 1].0, coords[i + 1].1);
+    for i in 0..valid_hops.len().saturating_sub(1) {
+        let h0 = valid_hops[i];
+        let h1 = valid_hops[i + 1];
+
+        if h1.location_estimated {
+            // Use RTT-based estimate for mismatch hops (avg of 3 fastest pings)
+            if let (Some(rtt0), Some(rtt1)) = (best_rtt(h0), best_rtt(h1)) {
+                let rtt_delta = (rtt1 - rtt0).max(0.0);
+                total += rtt_delta * RTT_KM_PER_MS;
+            }
+            // If no RTT data, skip this segment
+        } else {
+            // Normal geo-IP distance
+            let (lat0, lon0) = (h0.lat.unwrap(), h0.lon.unwrap());
+            let (lat1, lon1) = (h1.lat.unwrap(), h1.lon.unwrap());
+            total += haversine_km(lat0, lon0, lat1, lon1);
+        }
     }
     total
 }

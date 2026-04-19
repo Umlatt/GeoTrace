@@ -28,6 +28,7 @@ pub struct HopUpdate {
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub city: Option<String>,
+    pub country: Option<String>,
     pub org: Option<String>,
     pub timeout: bool,
     pub trace_complete: bool,
@@ -48,7 +49,7 @@ pub async fn run_traceroute(
                 .send(HopUpdate {
                     hop: 0, ip: None, hostname: None, rtt_ms: None,
                     loss_pct: None, lat: None, lon: None, city: None,
-                    org: None, timeout: false, trace_complete: false,
+                    country: None, org: None, timeout: false, trace_complete: false,
                     error: Some(format!("Failed to resolve host: {}", target)),
                     location_estimated: false,
                 })
@@ -72,7 +73,7 @@ pub async fn run_traceroute(
                 .send(HopUpdate {
                     hop: 0, ip: None, hostname: None, rtt_ms: None,
                     loss_pct: None, lat: None, lon: None, city: None,
-                    org: None, timeout: false, trace_complete: false,
+                    country: None, org: None, timeout: false, trace_complete: false,
                     error: Some(msg),
                     location_estimated: false,
                 })
@@ -130,6 +131,7 @@ pub async fn run_traceroute(
                 lat: None,
                 lon: None,
                 city: None,
+                country: None,
                 org: None,
                 timeout: false,
                 trace_complete: false,
@@ -184,6 +186,7 @@ pub async fn run_traceroute(
                             update.city = info.city.map(|c| format!("~{}", c));
                         }
                         update.org = info.org;
+                        update.country = info.country;
                     }
 
                     let lost = *lost_counts.entry(ttl).or_insert(0);
@@ -220,6 +223,7 @@ pub async fn run_traceroute(
                     lat: None,
                     lon: None,
                     city: None,
+                    country: None,
                     org: None,
                     timeout: false,
                     trace_complete: true,

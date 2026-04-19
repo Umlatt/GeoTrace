@@ -1,6 +1,6 @@
 [package]
 name = "geotrace"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "A geographical mtr clone with Braille-rendered world map in the terminal"
 license = "MIT"

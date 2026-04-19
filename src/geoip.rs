@@ -7,6 +7,7 @@ pub struct GeoIpInfo {
     pub lat: f64,
     pub lon: f64,
     pub city: Option<String>,
+    pub country: Option<String>,
     pub org: Option<String>,
 }
 
@@ -43,6 +44,7 @@ impl GeoIpLookup {
                     lat: c.lat,
                     lon: c.lon,
                     city: c.city.clone(),
+                    country: c.country.clone(),
                     org: c.org.clone(),
                 });
             }
@@ -55,6 +57,7 @@ impl GeoIpLookup {
             lat: r.lat,
             lon: r.lon,
             city: r.city.clone(),
+            country: r.country.clone(),
             org: r.org.clone(),
         }));
 
@@ -75,12 +78,20 @@ impl GeoIpLookup {
             .and_then(|n| n.get("en"))
             .map(|s| s.to_string());
 
+        let country_name = city
+            .country
+            .as_ref()
+            .and_then(|c| c.names.as_ref())
+            .and_then(|n| n.get("en"))
+            .map(|s| s.to_string());
+
         let org = None;
 
         Some(GeoIpInfo {
             lat,
             lon,
             city: city_name,
+            country: country_name,
             org,
         })
     }
