@@ -193,11 +193,15 @@ async fn main() -> anyhow::Result<()> {
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    // Dismiss help popup on any key
+                    // Dismiss help/info popups on any key
                     {
                         let mut st = state.lock().unwrap();
                         if st.show_help {
                             st.show_help = false;
+                            continue;
+                        }
+                        if st.show_info {
+                            st.show_info = false;
                             continue;
                         }
                     }
@@ -206,6 +210,10 @@ async fn main() -> anyhow::Result<()> {
                         KeyCode::Char('?') => {
                             let mut st = state.lock().unwrap();
                             st.show_help = true;
+                        }
+                        KeyCode::Char('i') => {
+                            let mut st = state.lock().unwrap();
+                            st.show_info = true;
                         }
                         KeyCode::Char('+') | KeyCode::Char('=') => {
                             // Zoom in (shrink viewport by 30% toward center)

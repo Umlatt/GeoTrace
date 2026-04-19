@@ -59,6 +59,8 @@ pub struct AppState {
     pub user_interacted: bool,
     /// Original target name (DNS name provided by user)
     pub target_name: Option<String>,
+    /// Show info/methodology popup
+    pub show_info: bool,
 }
 
 impl Default for AppState {
@@ -86,6 +88,7 @@ impl Default for AppState {
             use_metric: true,
             user_interacted: false,
             target_name: None,
+            show_info: false,
         }
     }
 }
@@ -114,6 +117,9 @@ pub fn draw(f: &mut Frame, state: &AppState) {
     if state.show_help {
         draw_help_popup(f);
     }
+    if state.show_info {
+        draw_info_popup(f);
+    }
 }
 
 fn draw_help_popup(f: &mut Frame) {
@@ -141,6 +147,10 @@ fn draw_help_popup(f: &mut Frame) {
             Span::styled("Toggle km / miles", Style::default().fg(Color::DarkGray)),
         ]),
         Line::from(Span::styled("              (distances & scale)", Style::default().fg(Color::Rgb(80, 80, 80)))),
+        Line::from(vec![
+            Span::styled("  i         ", Style::default().fg(Color::White)),
+            Span::styled("How it works", Style::default().fg(Color::DarkGray)),
+        ]),
         Line::from(vec![
             Span::styled("  ?         ", Style::default().fg(Color::White)),
             Span::styled("Show this help", Style::default().fg(Color::DarkGray)),
@@ -175,6 +185,107 @@ fn draw_help_popup(f: &mut Frame) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" Help ")
+                .style(Style::default().fg(Color::White)),
+        );
+    f.render_widget(popup, popup_area);
+}
+
+fn draw_info_popup(f: &mut Frame) {
+    let s_head = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let s_text = Style::default().fg(Color::DarkGray);
+    let s_hi   = Style::default().fg(Color::White);
+
+    let info_lines = vec![
+        Line::from(Span::styled("  How GeoTrace Works", s_head)),
+        Line::from(""),
+        Line::from(Span::styled("  Traceroute", s_head)),
+        Line::from(Span::styled("  ICMP Echo packets are sent with", s_text)),
+        Line::from(Span::styled("  increasing TTL (Time To Live).", s_text)),
+        Line::from(Span::styled("  Each router decrements the TTL;", s_text)),
+        Line::from(Span::styled("  when it hits zero the router sends", s_text)),
+        Line::from(Span::styled("  back a Time Exceeded reply. This", s_text)),
+        Line::from(Span::styled("  reveals each hop along the path.", s_text)),
+        Line::from(Span::styled("  Probes repeat continuously (like", s_text)),
+        Line::from(Span::styled("  mtr) to track live RTT and loss.", s_text)),
+        Line::from(""),
+        Line::from(Span::styled("  GeoIP Location", s_head)),
+        Line::from(Span::styled("  Each hop IP is looked up in an", s_text)),
+        Line::from(Span::styled("  embedded MaxMind GeoLite2 database", s_text)),
+        Line::from(Span::styled("  to resolve lat/lon coordinates,", s_text)),
+        Line::from(Span::styled("  city name, and country.", s_text)),
+        Line::from(""),
+        Line::from(Span::styled("  Mismatch Detection", s_head)),
+        Line::from(Span::styled("  The first hop with GeoIP becomes", s_text)),
+        Line::from(vec![
+            Span::styled("  the ", s_text),
+            Span::styled("anchor", s_hi),
+            Span::styled(". For each later hop:", s_text),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("    max_dist = ", s_text),
+            Span::styled("RTT_delta × 100 km/ms", s_hi),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("  100 km/ms is the theoretical max", s_text)),
+        Line::from(Span::styled("  for light in fiber (with routing", s_text)),
+        Line::from(Span::styled("  overhead). If the GeoIP distance", s_text)),
+        Line::from(Span::styled("  from the anchor exceeds max_dist,", s_text)),
+        Line::from(Span::styled("  the location is flagged with a", s_text)),
+        Line::from(vec![
+            Span::styled("  leading ", s_text),
+            Span::styled("*", s_hi),
+            Span::styled(" and shown in gray.", s_text),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("  Distance Estimation", s_head)),
+        Line::from(Span::styled("  Total journey distance sums each", s_text)),
+        Line::from(Span::styled("  hop-to-hop segment:", s_text)),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("    Normal: ", s_text),
+            Span::styled("Haversine (geo-IP coords)", s_hi),
+        ]),
+        Line::from(vec![
+            Span::styled("    Mismatch: ", s_text),
+            Span::styled("RTT_delta × 67 km/ms", s_hi),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("  67 km/ms is a realistic average", s_text)),
+        Line::from(Span::styled("  for fiber paths (vs the 100 km/ms", s_text)),
+        Line::from(Span::styled("  theoretical max). RTT uses the", s_text)),
+        Line::from(vec![
+            Span::styled("  average of the ", s_text),
+            Span::styled("3 fastest pings", s_hi),
+            Span::styled(" to", s_text),
+        ]),
+        Line::from(Span::styled("  smooth out jitter.", s_text)),
+        Line::from(""),
+        Line::from(Span::styled("  Map Rendering", s_head)),
+        Line::from(Span::styled("  Borders use NaturalEarth data at", s_text)),
+        Line::from(Span::styled("  10m resolution with 4 detail tiers", s_text)),
+        Line::from(Span::styled("  that adapt to zoom level. Lines", s_text)),
+        Line::from(Span::styled("  are drawn with Wu's anti-aliasing", s_text)),
+        Line::from(Span::styled("  algorithm. Route segments use the", s_text)),
+        Line::from(Span::styled("  destination hop's RTT color from", s_text)),
+        Line::from(Span::styled("  an 11-tier thermal scale.", s_text)),
+        Line::from(""),
+        Line::from(Span::styled("  Press any key to dismiss", s_text)),
+    ];
+
+    let popup_height = info_lines.len() as u16 + 2;
+    let popup_width = 44;
+    let area = f.area();
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width.min(area.width), popup_height.min(area.height));
+
+    f.render_widget(Clear, popup_area);
+    let popup = Paragraph::new(info_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" How It Works ")
                 .style(Style::default().fg(Color::White)),
         );
     f.render_widget(popup, popup_area);

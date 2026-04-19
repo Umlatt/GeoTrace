@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-04-19
+
+### Added
+
+- **Info popup (`i` key)** — in-app methodology tutorial explaining traceroute mechanics, GeoIP lookups, mismatch detection (anchor + 100 km/ms), distance estimation (haversine + 67 km/ms RTT fallback), and map rendering
+- **Metric/Imperial toggle (`u` key)** — switch between km and miles for journey distance and map scale
+- **International route labels** — when the route crosses country borders, source and destination names include the country (e.g., `Johannesburg, South Africa`)
+- **DNS target name in title** — when a hostname is provided, the map title shows the DNS name instead of the resolved IP address
+- **Origin-centered first zoom** — the first manual zoom centers on the source hop before applying the zoom
+- **Journey distance in title** — estimated travel distance shown in the map title bar as `[est. X km]`
+- **Compass scale** — map scale indicator displayed below the compass rose, adapts to zoom level and unit preference
+- **Country field in GeoIP** — country name extracted from MaxMind database and propagated through the pipeline
+
+### Changed
+
+- **Mismatch indicator** — replaced `*mismatch*` suffix with a `*` prefix on the location name, shown in gray (e.g., `*~London`)
+- **RTT-based distance for mismatch hops** — journey distance for flagged hops now uses RTT delta × 67 km/ms instead of unreliable geo-IP coordinates
+- **Best-of-3 RTT averaging** — distance estimates use the average of the 3 fastest pings from each hop's history to smooth out jitter
+- **Route table compacted** — renamed "Route" to "Hops", tighter column widths (#, IP, Snt, Ls%, RTT, Location)
+- **Map title** — dynamic `Route from <source> to <destination> [est. distance]` with yellow names, white distance text
+- **Location name fallback** — city → org → IP (or DNS name for destination)
+- **Legend footer** — simplified to show only `? Help`
+- **Version** — bumped to 1.0.2
+
 ## [1.0.1] — 2026-04-18
 
 ### Added
