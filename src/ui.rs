@@ -328,15 +328,11 @@ fn draw_route_table(f: &mut Frame, state: &AppState, area: Rect) {
                 .last_rtt
                 .map(|r| format!("{:.1}ms", r))
                 .unwrap_or_else(|| "*".to_string());
-            let coords_str = match (hop.lat, hop.lon) {
-                (Some(lat), Some(lon)) => format!("[{:.2},{:.2}] ", lat, lon),
-                _ => String::new(),
-            };
             let loc_base = match (&hop.city, &hop.org) {
-                (Some(c), Some(o)) => format!("{}{}/{}", coords_str, c, o),
-                (Some(c), None) => format!("{}{}", coords_str, c),
-                (None, Some(o)) => format!("{}{}", coords_str, o),
-                _ => coords_str,
+                (Some(c), Some(o)) => format!("{}/{}", c, o),
+                (Some(c), None) => c.clone(),
+                (None, Some(o)) => o.clone(),
+                _ => String::new(),
             };
             let loc = if hop.location_estimated && !loc_base.is_empty() {
                 format!("*{}", loc_base)

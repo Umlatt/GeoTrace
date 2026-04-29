@@ -8,7 +8,7 @@ Binary format:
   For each polyline:
     - u8: detail level (0=coastline, 1=country border, 2=state/province)
     - u32 LE: number of points
-    - For each point: i32 LE lat * 10000, i32 LE lon * 10000
+    - For each point: i32 LE lat * 1000000, i32 LE lon * 1000000
 """
 import json
 import struct
@@ -304,14 +304,14 @@ def main():
             f.write(struct.pack("<B", level))
             f.write(struct.pack("<I", len(points)))
             for lat, lon in points:
-                f.write(struct.pack("<ii", int(lat * 10000), int(lon * 10000)))
+                f.write(struct.pack("<ii", round(lat * 1000000), round(lon * 1000000)))
 
         # --- Labels section ---
         f.write(struct.pack("<I", len(all_labels)))
         for level, lat, lon, name in all_labels:
             name_bytes = name.encode("utf-8")
             f.write(struct.pack("<B", level))
-            f.write(struct.pack("<ii", int(lat * 10000), int(lon * 10000)))
+            f.write(struct.pack("<ii", round(lat * 1000000), round(lon * 1000000)))
             f.write(struct.pack("<H", len(name_bytes)))
             f.write(name_bytes)
 

@@ -5,14 +5,14 @@
 ///   Per polyline:
 ///     u8:  detail level (0=coastline, 1=country, 2=state/province, 3=admin-2)
 ///     u32 LE: number of points
-///     Per point: i32 LE lat*10000, i32 LE lon*10000
+///     Per point: i32 LE lat*1000000, i32 LE lon*1000000
 ///
 ///   Then (if data remains):
 ///   u32 LE: number of labels
 ///   Per label:
 ///     u8:  level (0=country, 1=state/province)
-///     i32 LE: lat*10000
-///     i32 LE: lon*10000
+///     i32 LE: lat*1000000
+///     i32 LE: lon*1000000
 ///     u16 LE: name length in bytes
 ///     [u8]:  name (UTF-8)
 
@@ -50,7 +50,7 @@ pub fn load_geodata() -> (Vec<Polyline>, Vec<TerritoryLabel>) {
         for _ in 0..n_points {
             let lat_raw = read_i32(data, &mut offset);
             let lon_raw = read_i32(data, &mut offset);
-            points.push((lat_raw as f64 / 10000.0, lon_raw as f64 / 10000.0));
+            points.push((lat_raw as f64 / 1_000_000.0, lon_raw as f64 / 1_000_000.0));
         }
         polylines.push(Polyline { level, points });
     }
@@ -73,8 +73,8 @@ pub fn load_geodata() -> (Vec<Polyline>, Vec<TerritoryLabel>) {
             offset += name_len;
             labels.push(TerritoryLabel {
                 level,
-                lat: lat_raw as f64 / 10000.0,
-                lon: lon_raw as f64 / 10000.0,
+                lat: lat_raw as f64 / 1_000_000.0,
+                lon: lon_raw as f64 / 1_000_000.0,
                 name,
             });
         }

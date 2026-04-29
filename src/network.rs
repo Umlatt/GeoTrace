@@ -66,7 +66,7 @@ pub async fn run_traceroute(
         Ok((s, r)) => (s, r),
         Err(e) => {
             let msg = format!(
-                "Cannot open raw socket: {}. Run: sudo setcap cap_net_raw+ep <binary>",
+                "Cannot open raw socket: {}. Run with: sudo <binary>",
                 e
             );
             let _ = tx

@@ -61,21 +61,18 @@ cp /path/to/GeoLite2-City.mmdb data/
 
 # Build (optimized release with LTO)
 make build
-
-# Grant raw socket capability (requires sudo)
-make setcap
 ```
 
 ## Usage
 
 ```bash
-# Basic traceroute
-./target/release/geotrace 8.8.8.8
+# Basic traceroute (raw sockets require root)
+sudo ./target/release/geotrace 8.8.8.8
 
 # With custom max hops
-./target/release/geotrace --max-hops 20 example.com
+sudo ./target/release/geotrace --max-hops 20 example.com
 
-# Or use the Makefile
+# Or use the Makefile (runs sudo automatically)
 make run ARGS="1.1.1.1"
 ```
 
@@ -110,7 +107,7 @@ Gray text in the Location column with a leading `*` indicates a **latency/distan
 ```
 geotrace/
 ├── Cargo.toml              # Dependencies and build config
-├── Makefile                # Build, setcap, run targets
+├── Makefile                # Build and run targets
 ├── LICENSE                 # MIT + third-party notices
 ├── CHANGELOG.md            # Version history
 ├── data/
