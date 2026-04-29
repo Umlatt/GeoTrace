@@ -232,28 +232,27 @@ def extract_labels(geojson, level, name_keys):
 def main():
     all_polylines = []  # list of (detail_level, [(lat, lon), ...])
 
+    # (name, fallback_name_if_first_fails)
     names_by_level = {
-        0: "ne_50m_coastline",
-        1: "ne_50m_admin_0_boundary_lines_land",
-        2: "ne_10m_admin_1_states_provinces_lines",
-        3: "ne_10m_admin_2_counties_lines",
+        0: ("ne_10m_coastline", None),
+        1: ("ne_10m_admin_0_boundary_lines_land", None),
+        2: ("ne_10m_admin_1_states_provinces_lines", None),
+        3: ("ne_10m_admin_2_counties_lines", "ne_10m_admin_2_counties"),
     }
 
-    tolerances = {
-        0: 0.02,   # light simplification for 50m coastlines
-        1: 0.02,   # light simplification for 50m country borders
-        2: 0.05,   # light simplification for 10m province borders
-        3: 0.08,   # moderate simplification for 10m admin-2 borders
-    }
-
-    for level, name in names_by_level.items():
+    for level, (name, fallback) in names_by_level.items():
         print(f"Processing level {level}: {name}")
         geojson = download_geojson_direct(None, name)
+        if geojson is None and fallback:
+            print(f"  Trying fallback: {fallback}")
+            geojson = download_geojson_direct(None, fallback)
         if geojson is None:
             print(f"  FAILED to download {name}, skipping")
             continue
 
-        polylines = extract_coords_from_geojson(geojson, False)
+        # For polygon sources (counties), treat as polygon boundaries
+        is_polygon = fallback is not None and geojson is not None
+        polylines = extract_coords_from_geojson(geojson, is_polygon)
         print(f"  Got {len(polylines)} polylines")
 
         total_points = 0
@@ -261,10 +260,7 @@ def main():
             # coords are [lon, lat] in GeoJSON, convert to (lat, lon)
             points = [(p[1], p[0]) for p in pl]
 
-            tol = tolerances[level]
-            if tol > 0:
-                points = simplify_polyline(points, tol)
-
+            # No simplification — preserve full 10m source resolution
             if len(points) >= 2:
                 all_polylines.append((level, points))
                 total_points += len(points)
